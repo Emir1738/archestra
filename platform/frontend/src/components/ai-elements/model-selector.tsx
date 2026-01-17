@@ -1,205 +1,243 @@
-import type { ComponentProps, ReactNode } from "react";
+"use client";
+
+import { providerDisplayNames, type SupportedProvider } from "@shared";
+// EyeIcon ve GlobeIcon buraya eklendi
+import { CheckIcon, EyeIcon, GlobeIcon } from "lucide-react";
+import { useMemo, useState } from "react";
 import {
-  Command,
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-  CommandShortcut,
-} from "@/components/ui/command";
+  ModelSelectorContent,
+  ModelSelectorEmpty,
+  ModelSelectorGroup,
+  ModelSelectorInput,
+  ModelSelectorItem,
+  ModelSelectorList,
+  ModelSelectorLogo,
+  ModelSelectorName,
+  ModelSelector as ModelSelectorRoot,
+  ModelSelectorTrigger,
+} from "@/components/ai-elements/model-selector";
+import { PromptInputButton } from "@/components/ai-elements/prompt-input";
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useModelsByProvider } from "@/lib/chat-models.query";
 
-export type ModelSelectorProps = ComponentProps<typeof Dialog>;
+interface ModelSelectorProps {
+  /** Currently selected model */
+  selectedModel: string;
+  /** Callback when model is changed */
+  onModelChange: (model: string) => void;
+  /** Whether the selector should be disabled */
+  disabled?: boolean;
+  /** Number of messages in current conversation (for mid-conversation warning) */
+  messageCount?: number;
+  /** Callback when the selector opens or closes */
+  onOpenChange?: (open: boolean) => void;
+}
 
-export const ModelSelector = (props: ModelSelectorProps) => (
-  <Dialog {...props} />
-);
-
-export type ModelSelectorTriggerProps = ComponentProps<typeof DialogTrigger>;
-
-export const ModelSelectorTrigger = (props: ModelSelectorTriggerProps) => (
-  <DialogTrigger {...props} />
-);
-
-export type ModelSelectorContentProps = ComponentProps<typeof DialogContent> & {
-  title?: ReactNode;
+/** Map our provider names to logo provider names */
+const providerToLogoProvider: Record<SupportedProvider, string> = {
+  openai: "openai",
+  anthropic: "anthropic",
+  gemini: "google",
+  cerebras: "cerebras",
+  vllm: "vllm",
+  ollama: "ollama",
+  zhipuai: "zhipuai",
 };
 
-export const ModelSelectorContent = ({
-  className,
-  children,
-  title = "Model Selector",
-  ...props
-}: ModelSelectorContentProps) => (
-  <DialogContent className={cn("p-0", className)} {...props}>
-    <DialogTitle className="sr-only">{title}</DialogTitle>
-    <Command className="**:data-[slot=command-input-wrapper]:h-auto">
-      {children}
-    </Command>
-  </DialogContent>
-);
+export function ModelSelector({
+  selectedModel,
+  onModelChange,
+  disabled = false,
+  messageCount = 0,
+  onOpenChange: onOpenChangeProp,
+}: ModelSelectorProps) {
+  const { modelsByProvider } = useModelsByProvider();
+  const [pendingModel, setPendingModel] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
-export type ModelSelectorDialogProps = ComponentProps<typeof CommandDialog>;
+  const handleOpenChange = (newOpen: boolean) => {
+    setOpen(newOpen);
+    onOpenChangeProp?.(newOpen);
+  };
 
-export const ModelSelectorDialog = (props: ModelSelectorDialogProps) => (
-  <CommandDialog {...props} />
-);
+  const availableProviders = useMemo(() => {
+    return Object.keys(modelsByProvider) as SupportedProvider[];
+  }, [modelsByProvider]);
 
-export type ModelSelectorInputProps = ComponentProps<typeof CommandInput>;
+  const getProviderForModel = (model: string): SupportedProvider | null => {
+    for (const provider of availableProviders) {
+      if (modelsByProvider[provider]?.some((m) => m.id === model)) {
+        return provider;
+      }
+    }
+    return null;
+  };
 
-export const ModelSelectorInput = ({
-  className,
-  ...props
-}: ModelSelectorInputProps) => (
-  <CommandInput className={cn("h-auto py-3.5", className)} {...props} />
-);
+  const selectedModelProvider = getProviderForModel(selectedModel);
+  const selectedModelLogo = selectedModelProvider
+    ? providerToLogoProvider[selectedModelProvider]
+    : null;
 
-export type ModelSelectorListProps = ComponentProps<typeof CommandList>;
+  const selectedModelDisplayName = useMemo(() => {
+    for (const provider of availableProviders) {
+      const model = modelsByProvider[provider]?.find(
+        (m) => m.id === selectedModel,
+      );
+      if (model) return model.displayName;
+    }
+    return selectedModel;
+  }, [selectedModel, availableProviders, modelsByProvider]);
 
-export const ModelSelectorList = (props: ModelSelectorListProps) => (
-  <CommandList {...props} />
-);
+  const handleSelectModel = (model: string) => {
+    if (model === selectedModel) {
+      handleOpenChange(false);
+      return;
+    }
+    handleOpenChange(false);
+    if (messageCount > 0) {
+      setPendingModel(model);
+    } else {
+      onModelChange(model);
+    }
+  };
 
-export type ModelSelectorEmptyProps = ComponentProps<typeof CommandEmpty>;
+  const handleConfirmChange = () => {
+    if (pendingModel) {
+      onModelChange(pendingModel);
+      setPendingModel(null);
+    }
+  };
 
-export const ModelSelectorEmpty = (props: ModelSelectorEmptyProps) => (
-  <CommandEmpty {...props} />
-);
+  const handleCancelChange = () => {
+    setPendingModel(null);
+  };
 
-export type ModelSelectorGroupProps = ComponentProps<typeof CommandGroup>;
+  const allAvailableModelIds = useMemo(
+    () =>
+      availableProviders.flatMap(
+        (provider) => modelsByProvider[provider]?.map((m) => m.id) ?? [],
+      ),
+    [availableProviders, modelsByProvider],
+  );
+  const isModelAvailable = allAvailableModelIds.includes(selectedModel);
 
-export const ModelSelectorGroup = (props: ModelSelectorGroupProps) => (
-  <CommandGroup {...props} />
-);
+  if (availableProviders.length === 0) {
+    return (
+      <PromptInputButton disabled className="min-w-40">
+        <ModelSelectorName>No models available</ModelSelectorName>
+      </PromptInputButton>
+    );
+  }
 
-export type ModelSelectorItemProps = ComponentProps<typeof CommandItem>;
+  return (
+    <>
+      <ModelSelectorRoot open={open} onOpenChange={handleOpenChange}>
+        <ModelSelectorTrigger asChild>
+          <PromptInputButton disabled={disabled}>
+            {selectedModelLogo && (
+              <ModelSelectorLogo provider={selectedModelLogo} />
+            )}
+            <ModelSelectorName>
+              {selectedModelDisplayName || "Select model"}
+            </ModelSelectorName>
+          </PromptInputButton>
+        </ModelSelectorTrigger>
+        <ModelSelectorContent
+          title="Select Model"
+          onCloseAutoFocus={(e) => e.preventDefault()}
+        >
+          <ModelSelectorInput placeholder="Search models..." />
+          <ModelSelectorList>
+            <ModelSelectorEmpty>No models found.</ModelSelectorEmpty>
 
-export const ModelSelectorItem = (props: ModelSelectorItemProps) => (
-  <CommandItem {...props} />
-);
+            {!isModelAvailable && selectedModel && (
+              <ModelSelectorGroup heading="Current (API key missing)">
+                <ModelSelectorItem
+                  disabled
+                  value={selectedModel}
+                  className="text-yellow-600"
+                >
+                  {selectedModelLogo && (
+                    <ModelSelectorLogo provider={selectedModelLogo} />
+                  )}
+                  <ModelSelectorName>{selectedModel}</ModelSelectorName>
+                  <CheckIcon className="ml-auto size-4" />
+                </ModelSelectorItem>
+              </ModelSelectorGroup>
+            )}
 
-export type ModelSelectorShortcutProps = ComponentProps<typeof CommandShortcut>;
+            {availableProviders.map((provider) => (
+              <ModelSelectorGroup
+                key={provider}
+                heading={providerDisplayNames[provider]}
+              >
+                {modelsByProvider[provider]?.map((model) => (
+                  <ModelSelectorItem
+                    key={model.id}
+                    value={model.id}
+                    onSelect={() => handleSelectModel(model.id)}
+                  >
+                    <ModelSelectorLogo
+                      provider={providerToLogoProvider[provider]}
+                    />
+                    <ModelSelectorName>{model.displayName}</ModelSelectorName>
 
-export const ModelSelectorShortcut = (props: ModelSelectorShortcutProps) => (
-  <CommandShortcut {...props} />
-);
+                    {/* YETENEK İKONLARI BURAYA EKLENDİ */}
+                    <div className="ml-auto flex items-center gap-2">
+                      {model.capabilities?.vision && (
+                        <EyeIcon className="size-3.5 text-muted-foreground" />
+                      )}
+                      {model.capabilities?.web_search && (
+                        <GlobeIcon className="size-3.5 text-muted-foreground" />
+                      )}
+                      {selectedModel === model.id ? (
+                        <CheckIcon className="size-4 ml-1" />
+                      ) : (
+                        <div className="size-4 ml-1" />
+                      )}
+                    </div>
+                  </ModelSelectorItem>
+                ))}
+              </ModelSelectorGroup>
+            ))}
+          </ModelSelectorList>
+        </ModelSelectorContent>
+      </ModelSelectorRoot>
 
-export type ModelSelectorSeparatorProps = ComponentProps<
-  typeof CommandSeparator
->;
-
-export const ModelSelectorSeparator = (props: ModelSelectorSeparatorProps) => (
-  <CommandSeparator {...props} />
-);
-
-export type ModelSelectorLogoProps = Omit<
-  ComponentProps<"img">,
-  "src" | "alt"
-> & {
-  provider:
-    | "moonshotai-cn"
-    | "lucidquery"
-    | "moonshotai"
-    | "zai-coding-plan"
-    | "alibaba"
-    | "xai"
-    | "vultr"
-    | "nvidia"
-    | "upstage"
-    | "groq"
-    | "github-copilot"
-    | "mistral"
-    | "vercel"
-    | "nebius"
-    | "deepseek"
-    | "alibaba-cn"
-    | "google-vertex-anthropic"
-    | "venice"
-    | "chutes"
-    | "cortecs"
-    | "github-models"
-    | "togetherai"
-    | "azure"
-    | "baseten"
-    | "huggingface"
-    | "opencode"
-    | "fastrouter"
-    | "google"
-    | "google-vertex"
-    | "cloudflare-workers-ai"
-    | "inception"
-    | "wandb"
-    | "openai"
-    | "zhipuai-coding-plan"
-    | "perplexity"
-    | "openrouter"
-    | "zenmux"
-    | "v0"
-    | "iflowcn"
-    | "synthetic"
-    | "deepinfra"
-    | "zhipuai"
-    | "submodel"
-    | "zai"
-    | "inference"
-    | "requesty"
-    | "morph"
-    | "lmstudio"
-    | "anthropic"
-    | "aihubmix"
-    | "fireworks-ai"
-    | "modelscope"
-    | "llama"
-    | "scaleway"
-    | "amazon-bedrock"
-    | "cerebras"
-    | (string & {});
-};
-
-export const ModelSelectorLogo = ({
-  provider,
-  className,
-  ...props
-}: ModelSelectorLogoProps) => (
-  <img
-    {...props}
-    alt={`${provider} logo`}
-    className={cn("size-3 dark:invert", className)}
-    height={12}
-    src={`https://models.dev/logos/${provider}.svg`}
-    width={12}
-  />
-);
-
-export type ModelSelectorLogoGroupProps = ComponentProps<"div">;
-
-export const ModelSelectorLogoGroup = ({
-  className,
-  ...props
-}: ModelSelectorLogoGroupProps) => (
-  <div
-    className={cn(
-      "-space-x-1 flex shrink-0 items-center [&>img]:rounded-full [&>img]:bg-background [&>img]:p-px [&>img]:ring-1 dark:[&>img]:bg-foreground",
-      className,
-    )}
-    {...props}
-  />
-);
-
-export type ModelSelectorNameProps = ComponentProps<"span">;
-
-export const ModelSelectorName = ({
-  className,
-  ...props
-}: ModelSelectorNameProps) => (
-  <span className={cn("flex-1 truncate text-left", className)} {...props} />
-);
+      <AlertDialog
+        open={!!pendingModel}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleCancelChange();
+            onOpenChangeProp?.(false);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change model mid-conversation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Switching models during a conversation may affect response quality
+              and consistency.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmChange}>
+              Change Model
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
